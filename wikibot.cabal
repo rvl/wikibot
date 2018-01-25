@@ -1,0 +1,66 @@
+name:                wikibot
+version:             0.1.0.0
+synopsis:            Use a slack bot to search a github wiki
+license:             GPL-3
+license-file:        LICENSE
+author:              Rodney Lorrimar
+maintainer:          dev@rodney.id.au
+category:            Web
+build-type:          Simple
+extra-source-files:  ChangeLog.md, README.md
+cabal-version:       >=1.10
+
+executable wikibot
+  main-is:             WikiBot.hs
+  other-modules:       Config, Search
+  other-extensions:    DeriveGeneric, PackageImports, OverloadedStrings
+  build-depends:       base >=4.10 && <4.11
+                     , shake >=0.16 && <0.17
+                     , bloodhound >=0.15 && <0.16
+                     , http-client >=0.5 && <0.6
+                     , text >=1.2 && <1.3
+                     , bytestring >=0.10 && <0.11
+                     , aeson >=1.2 && <1.3
+                     , slack-api
+                     , yaml
+                     , errors
+                     , cryptonite
+                     , filepath
+                     , containers
+  default-language:    Haskell2010
+
+executable build
+  main-is:             Build.hs
+  other-modules:       Config, Search
+  other-extensions:    DeriveGeneric, PackageImports, OverloadedStrings
+  build-depends:       base >=4.10 && <4.11
+                     , shake >=0.16 && <0.17
+                     , bloodhound >=0.15 && <0.16
+                     , http-client >=0.5 && <0.6
+                     , text >=1.2 && <1.3
+                     , bytestring >=0.10 && <0.11
+                     , aeson >=1.2 && <1.3
+                     , slack-api
+                     , yaml
+                     , errors
+                     , cryptonite
+  default-language:    Haskell2010
+
+test-suite test
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:             Spec.hs
+  build-depends:       base
+                     , wikibot
+                     , shake >=0.16 && <0.17
+                     , bloodhound >=0.15 && <0.16
+                     , http-client >=0.5 && <0.6
+                     , text >=1.2 && <1.3
+                     , bytestring >=0.10 && <0.11
+                     , aeson >=1.2 && <1.3
+                     , yaml
+                     , errors
+                     , hspec
+                     , containers
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  default-language:    Haskell2010
