@@ -18,13 +18,15 @@ wiki then it can't be indexed by Google.
 
 ## Configuration
 
-config.yml
+Put configuration in `config.yml`, see
+[`config-example.yml`](./config-example.yml) for the possible options.
 
 ## TODO
 
 * [ ] better formatting of search results.
 * [ ] **access control** -- i.e. the bot will only join certain channels
   and respond to certain people.
+* [ ] update search index when wiki is changed.
 * [ ] add better elasticsearch index parameters and mappings.
 * [ ] Automatic table of contents generation.
 
