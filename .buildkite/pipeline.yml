@@ -1,0 +1,12 @@
+env:
+  NIX_PATH: /nix/var/nix/profiles/per-user/root/channels/nixos
+
+steps:
+  - label: "Build"
+    commands:
+      - nix-shell --run "cabal configure"
+      - nix-shell --run "cabal build"
+
+  - label: "Test"
+    commands:
+      - nix-shell --run "cabal test"
