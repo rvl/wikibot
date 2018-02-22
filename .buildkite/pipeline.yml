@@ -2,6 +2,18 @@ env:
   NIX_PATH: /nix/var/nix/profiles/per-user/root/channels/nixos
 
 steps:
+  - label: "Echo"
+    commands:
+      - echo "hello"
+    agents:
+      queue: lahlah
+
+  - label: "Nix Info"
+    commands:
+      - nix-shell -p nix-info --run "nix-info -m"
+    agents:
+      queue: lahlah
+
   - label: "Build"
     commands:
       - nix-shell --run "cabal configure"
