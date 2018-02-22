@@ -6,11 +6,11 @@ steps:
     commands:
       - nix-shell --run "cabal configure"
       - nix-shell --run "cabal build"
-    agent:
+    agents:
       queue: lahlah
 
   - label: "Test"
     commands:
       - nix-shell --run "cabal test"
-    agent:
+    agents:
       queue: lahlah
