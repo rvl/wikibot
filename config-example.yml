@@ -2,7 +2,7 @@ docs_dir: /path/to/your/wiki/repo/clone
 build_dir: _build
 wiki_url: https://github.com/your-org/your-repo/wiki/
 elastic:
-  server: http://localhost:9200/
-  index_name: docs
+  server: http://localhost:9200
+  index_name: wiki
 slack:
   api_token: your_token_here
