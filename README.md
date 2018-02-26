@@ -23,13 +23,14 @@ Put configuration in `config.yml`, see
 
 ## TODO
 
-* [ ] better formatting of search results.
+* [x] better formatting of search results.
+* [ ] respond to private messages and slash commands
 * [ ] **access control** -- i.e. the bot will only join certain channels
   and respond to certain people.
 * [ ] update search index when wiki is changed.
-* [ ] add better elasticsearch index parameters and mappings.
-* [ ] Automatic table of contents generation.
-
+* [x] add better elasticsearch index parameters and mappings.
+* [x] Automatic table of contents generation per page.
+* [ ] Generate table of contents for entire wiki.
 
 
 [Pandoc]: https://pandoc.org/
