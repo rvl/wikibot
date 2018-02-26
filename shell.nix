@@ -13,6 +13,9 @@ let
       self: super: {
         # https://github.com/mpickering/slack-api/issues/84
         slack-api = pkgs.haskell.lib.dontCheck (self.callPackage ./slack-api.nix {});
+
+        # add missing char filters to mappings api
+        bloodhound = pkgs.haskell.lib.dontCheck (self.callPackage ./bloodhound.nix {});
       };
   };
 

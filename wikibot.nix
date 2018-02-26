@@ -1,5 +1,6 @@
-{ mkDerivation, aeson, base, bloodhound, bytestring, cryptonite
-, errors, hspec, http-client, shake, slack-api, stdenv, text, yaml
+{ mkDerivation, aeson, base, bloodhound, bytestring, containers
+, cryptonite, errors, filepath, hspec, http-client, memory, pandoc
+, pandoc-types, shake, slack-api, stdenv, text, yaml
 }:
 mkDerivation {
   pname = "wikibot";
@@ -8,12 +9,12 @@ mkDerivation {
   isLibrary = false;
   isExecutable = true;
   executableHaskellDepends = [
-    aeson base bloodhound bytestring cryptonite errors http-client
-    shake slack-api text yaml
+    aeson base bloodhound bytestring containers cryptonite errors
+    filepath http-client pandoc pandoc-types shake slack-api text yaml
   ];
   testHaskellDepends = [
-    aeson base bloodhound bytestring errors hspec http-client shake
-    text yaml
+    aeson base bloodhound bytestring containers cryptonite errors
+    filepath hspec http-client memory shake text yaml
   ];
   description = "Use a slack bot to search a github wiki";
   license = stdenv.lib.licenses.gpl3;
