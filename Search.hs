@@ -27,13 +27,14 @@ import Data.ByteString (ByteString)
 import Control.Monad (void, when)
 import Data.Monoid ((<>))
 import Data.Maybe (fromMaybe)
-import System.FilePath.Posix (dropExtension)
+import System.FilePath.Posix (dropExtension, takeBaseName)
 import qualified Data.Map.Lazy as M
 
 import Config
 
 data Document = Document { docId :: Text
                          , docContent :: Text
+                         , docHTML :: Text
                          , docFileName :: FilePath
                          , docTitle  :: Text
                          } deriving (Eq, Generic, Show)
@@ -44,15 +45,40 @@ instance ToJSON Document where
 instance FromJSON Document where
   parseJSON = genericParseJSON customOptions
 
-makeDocument :: FilePath -> FilePath -> String -> Document
-makeDocument base doc html = Document (T.pack id) (T.pack html) name (T.pack "")
-  where
-    id = makeDocumentId name
-    name = makeRelative base doc
+data DocumentMapping = DocumentMapping deriving (Eq, Show)
+
+instance ToJSON DocumentMapping where
+  toJSON DocumentMapping =
+    object
+      [ "_all" .= object [ "enabled" .= False ]
+      , "properties" .=
+        object [ "title"   .= object [ "type" .= ("string" :: Text)
+                                     , "analyzer" .= ("title_analyzer" :: Text) ]
+               , "content" .= object [ "type" .= ("text" :: Text)
+                                     , "analyzer" .= ("html_analyzer" :: Text) ]
+               , "updated" .= object [ "type" .= ("date" :: Text)
+                                     , "format" .= ("strict_date_optional_time||epoch_millis" :: Text ) ]
+               ]
+      ]
+
+makeDocument :: FilePath -> FilePath -> String -> String -> Document
+makeDocument base doc txt html = Document
+  { docId = T.pack $ makeDocumentId name
+  , docContent = T.pack txt
+  , docHTML = T.pack html
+  , docFileName = name
+  , docTitle = titleFromFilename doc
+  }
+  where name = makeRelative base doc
 
 makeDocumentId :: FilePath -> String
 makeDocumentId md = show (hash bs :: Digest SHA1)
   where bs = S8.pack md
+
+titleFromFilename :: FilePath -> Text
+titleFromFilename = subs . T.pack . takeBaseName
+  where
+    subs = T.replace "-" " "
 
 data DocSearch = DocSearch
   { docSearchRun :: forall a. BH IO a -> IO a
@@ -65,7 +91,7 @@ makeDocSearch :: Config -> DocSearch
 makeDocSearch cfg@Config{..} = DocSearch
   { docSearchRun = withBH defaultManagerSettings testServer
   , docSearchIdx = IndexName $ cfgElasticIndexName cfgElastic
-  , docSearchMapping = MappingName "doc"
+  , docSearchMapping = MappingName "wikidoc"
   , docSearchConfig = cfg
   }
   where
@@ -75,7 +101,37 @@ createDocIndex :: DocSearch -> IO (Response LS8.ByteString)
 createDocIndex DocSearch{..} = docSearchRun $ do
   exists <- indexExists docSearchIdx
   when exists . void $ deleteIndex docSearchIdx
-  createIndex defaultIndexSettings docSearchIdx
+
+  let
+    replicaCount = 0
+    numShards = 1
+    settings = [ NumberOfReplicas (ReplicaCount replicaCount)
+               , AnalysisSetting wikiAnalysis ]
+  res <- createIndexWith settings numShards docSearchIdx
+  void $ putMapping docSearchIdx docSearchMapping DocumentMapping
+  return res
+
+wikiAnalysis :: Analysis
+wikiAnalysis = Analysis
+  { analysisAnalyzer    = M.fromList [("html_analyzer", ba), ("title_analyzer", ta)]
+  , analysisTokenizer   = M.empty
+  , analysisTokenFilter = M.fromList [("english_stemmer", stemmer), ("english_stop", stop)]
+  , analysisCharFilter  = M.empty
+  }
+  where
+    -- https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-htmlstrip-charfilter.html
+    ba = AnalyzerDefinition
+      { analyzerDefinitionTokenizer = Just (Tokenizer "standard")
+      , analyzerDefinitionFilter = map TokenFilter ["standard", "lowercase", "english_stemmer", "english_stop"]
+      , analyzerDefinitionCharFilter = [CharFilter "html_strip"]
+      }
+    ta = AnalyzerDefinition
+      { analyzerDefinitionTokenizer = Just (Tokenizer "standard")
+      , analyzerDefinitionFilter = map TokenFilter ["standard", "lowercase", "english_stemmer"]
+      , analyzerDefinitionCharFilter = []
+      }
+    stemmer = TokenFilterDefinitionStemmer English
+    stop = TokenFilterDefinitionStop (Left English)
 
 deleteDocIndex :: DocSearch -> IO ()
 deleteDocIndex DocSearch{..} = void . docSearchRun $ deleteIndex docSearchIdx
@@ -98,9 +154,7 @@ doSearch DocSearch{..} q = do
       hs = hits . searchHits <$> res :: Either String [Hit Document]
   return . fmap (map (makeResult docSearchConfig)) $ hs
   where
-    -- query = TermQuery (Term "content" q) Nothing
-    -- fixme: need to search on content not _all in order to get highlights
-    query = QueryMatchQuery $ mkMatchQuery (FieldName "content") (QueryString q)
+    query = QueryMultiMatchQuery $ mkMultiMatchQuery [FieldName "title^3", FieldName "content"] (QueryString q)
     search = mkHighlightSearch (Just query) highlights
     highlights = Highlights Nothing [FieldHighlight (FieldName "content") Nothing]
 
@@ -117,4 +171,4 @@ makeDocUrl baseUrl Document{..} = baseUrl <> T.pack basename
   where basename = dropExtension docFileName
 
 toMarkdown :: Text -> Text
-toMarkdown = id
+toMarkdown = T.replace "<em>" "*" . T.replace "</em>" "*"

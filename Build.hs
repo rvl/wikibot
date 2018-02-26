@@ -1,4 +1,4 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NoOverloadedStrings, RecordWildCards #-}
 
 import Development.Shake
 import Development.Shake.Command
@@ -33,14 +33,20 @@ main = do
     cfgBuildDir ++ "//*.html" %> \out -> do
       let md = sourceFor out
       need [md]
-      cmd_ "pandoc -f markdown -t html -s -o" [out, md]
+      cmd_ "pandoc --toc -f gfm -t html -s -o" [out, md]
+
+    cfgBuildDir ++ "//*.txt" %> \out -> do
+      let md = sourceFor out
+      need [md]
+      cmd_ "pandoc -f gfm -t plain -o" [out, md]
 
     cfgBuildDir ++ "//*.indexed" %> \out -> do
       let md = sourceFor out
           html = out -<.> "html"
-      need [html, md, "_build/elastic-index"]
-      doc <- loadDocument config md html
-      putNormal $ "Indexing " ++ (T.unpack (docId doc))
+          txt = out -<.> "txt"
+      need ["_build/elastic-index"]
+      doc <- loadDocument config md txt html
+      putNormal $ "Indexing " ++ (T.unpack (docId doc)) ++ " " ++ md
       resp <- liftIO $ indexSearchDoc search doc
       writeFile' out (show resp)
 
@@ -64,8 +70,10 @@ main = do
     phony "clean-index" cleanIndex
 
 
-loadDocument  :: Config -> FilePath -> FilePath -> Action Document
-loadDocument Config{..} md html = makeDocument cfgDocsDir md <$> readFile' html
+loadDocument  :: Config -> FilePath -> FilePath -> FilePath -> Action Document
+loadDocument Config{..} md txt html = do
+  need [txt, html]
+  makeDocument cfgDocsDir md <$> readFile' txt <*> readFile' html
 
 notHiddenFile :: FilePath -> Bool
 notHiddenFile = not . any isHidden . splitPath
