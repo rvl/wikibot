@@ -24,14 +24,19 @@ Put configuration in `config.yml`, see
 ## TODO
 
 * [x] better formatting of search results.
-* [ ] respond to private messages and slash commands
+* [ ] respond to private messages
+* [ ] respond to slash commands
 * [ ] **access control** -- i.e. the bot will only join certain channels
   and respond to certain people.
+* [ ] paging of search results
 * [ ] update search index when wiki is changed.
+* [ ] error handling in bot loop
+* [ ] error handling when searching
 * [x] add better elasticsearch index parameters and mappings.
 * [x] Automatic table of contents generation per page.
 * [ ] Generate table of contents for entire wiki.
-
+* [ ] add pandoc metadata to elasticsearch index
+* [ ] add document last modified info to elasticsearch index
 
 [Pandoc]: https://pandoc.org/
 [Shake]: http://shakebuild.com/

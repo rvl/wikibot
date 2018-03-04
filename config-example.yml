@@ -4,5 +4,16 @@ wiki_url: https://github.com/your-org/your-repo/wiki/
 elastic:
   server: http://localhost:9200
   index_name: wiki
+server:
+  listen_address: localhost
+  listen_port: 3000
+  base_url: https://wikibot.yoursite.io/
 slack:
-  api_token: your_token_here
+  api_token: application_token_here
+  bot_token: bot_token_here
+  verification_token: verification_token_here
+  # respond:
+  #   - "#general"
+  #   - "#random"
+  #   - "@rvl"
+  respond: *

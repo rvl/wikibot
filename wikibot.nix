@@ -1,6 +1,8 @@
-{ mkDerivation, aeson, base, bloodhound, bytestring, containers
-, cryptonite, errors, filepath, hspec, http-client, memory, pandoc
-, pandoc-types, shake, slack-api, stdenv, text, yaml
+{ mkDerivation, aeson, async, base, bloodhound, bytestring, colour
+, containers, cryptonite, errors, filepath, formatting, hspec
+, http-client, http-types, memory, network-uri, pandoc
+, pandoc-types, say, scotty, shake, slack-api, split, stdenv, text
+, wai, wai-extra, warp, yaml
 }:
 mkDerivation {
   pname = "wikibot";
@@ -9,8 +11,10 @@ mkDerivation {
   isLibrary = false;
   isExecutable = true;
   executableHaskellDepends = [
-    aeson base bloodhound bytestring containers cryptonite errors
-    filepath http-client pandoc pandoc-types shake slack-api text yaml
+    aeson async base bloodhound bytestring colour containers cryptonite
+    errors filepath formatting http-client http-types network-uri
+    pandoc pandoc-types say scotty shake slack-api split text wai
+    wai-extra warp yaml
   ];
   testHaskellDepends = [
     aeson base bloodhound bytestring containers cryptonite errors

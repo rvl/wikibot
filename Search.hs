@@ -17,7 +17,7 @@ import Network.HTTP.Client
 import GHC.Generics
 import Data.Text (Text)
 import qualified Data.Text as T
-import "cryptonite" Crypto.Hash
+import Crypto.Hash
 import qualified Data.ByteString.Char8 as S8
 import qualified Data.ByteString.Lazy.Char8 as LS8
 import Data.Aeson
@@ -29,6 +29,7 @@ import Data.Monoid ((<>))
 import Data.Maybe (fromMaybe)
 import System.FilePath.Posix (dropExtension, takeBaseName)
 import qualified Data.Map.Lazy as M
+import Network.URI (URI, relativeTo, parseRelativeReference)
 
 import Config
 
@@ -141,8 +142,10 @@ indexSearchDoc DocSearch{..} doc = docSearchRun $
   indexDocument docSearchIdx docSearchMapping defaultIndexDocumentSettings doc (DocId (docId doc))
 
 data WikiSearchResult = WikiSearchResult
-  { wikiResHighlight :: Text
-  , wikiResURL :: Text
+  { wikiResTitle :: Text
+  , wikiResURL :: URI
+  , wikiResHighlight :: Maybe Text
+  , wikiResScore :: Maybe Double
   } deriving (Generic, Show, Eq)
 
 doSearch :: DocSearch -> Text -> IO (Either String [WikiSearchResult])
@@ -151,24 +154,27 @@ doSearch DocSearch{..} q = do
   reply <- docSearchRun $ searchAll search
   -- putStrLn $ "reply: " ++ (LS8.unpack (responseBody reply))
   let res = eitherDecode (responseBody reply) :: Either String (SearchResult Document)
-      hs = hits . searchHits <$> res :: Either String [Hit Document]
-  return . fmap (map (makeResult docSearchConfig)) $ hs
+      hs = searchHits <$> res :: Either String (SearchHits Document)
+  return (makeResults <$> hs)
   where
+    makeResults :: SearchHits Document -> [WikiSearchResult]
+    makeResults SearchHits{..} = map (makeResult docSearchConfig) hits
     query = QueryMultiMatchQuery $ mkMultiMatchQuery [FieldName "title^3", FieldName "content"] (QueryString q)
     search = mkHighlightSearch (Just query) highlights
     highlights = Highlights Nothing [FieldHighlight (FieldName "content") Nothing]
 
 makeResult :: Config -> Hit Document -> WikiSearchResult
-makeResult Config{..} hit = WikiSearchResult (fromMaybe title hl) (fromMaybe docId url)
+makeResult Config{..} hit = WikiSearchResult title url hl (hitScore hit)
   where
     hl = T.unlines . map toMarkdown <$> (hitHighlight hit >>= M.lookup "content")
     docId = T.pack . show . hitDocId $ hit
-    url = makeDocUrl cfgWikiURL <$> hitSource hit
+    url = maybe cfgWikiURL (makeDocUrl cfgWikiURL) $ hitSource hit
     title = fromMaybe "No title" (docTitle <$> hitSource hit)
 
-makeDocUrl :: Text -> Document -> Text
-makeDocUrl baseUrl Document{..} = baseUrl <> T.pack basename
-  where basename = dropExtension docFileName
+makeDocUrl :: URI -> Document -> URI
+makeDocUrl baseUrl Document{..} = name `relativeTo` baseUrl
+  where
+    Just name = parseRelativeReference (dropExtension docFileName)
 
 toMarkdown :: Text -> Text
 toMarkdown = T.replace "<em>" "*" . T.replace "</em>" "*"

@@ -11,7 +11,10 @@ let
   haskellPackages = haskellPackages'.override {
     overrides =
       self: super: {
+        # Problem 1: no hackage release
         # https://github.com/mpickering/slack-api/issues/84
+        # Problem 2: no rich message buttons => use jkarni fork
+        # https://github.com/jkarni/slack-api
         slack-api = pkgs.haskell.lib.dontCheck (self.callPackage ./slack-api.nix {});
 
         # add missing char filters to mappings api
