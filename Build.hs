@@ -11,6 +11,8 @@ import qualified Data.Text as T
 import Data.Text (Text)
 import Data.Aeson
 import Control.Monad (void, when)
+import Data.Maybe (fromMaybe)
+import Data.List.Split (splitOn)
 
 import Config
 import Search
@@ -21,32 +23,42 @@ main = do
   let search = makeDocSearch config
 
   shakeArgs shakeOptions{shakeFiles=cfgBuildDir} $ do
-    markdowns <- fmap (filter notHiddenFile) . liftIO $ getDirectoryFilesIO cfgDocsDir ["//*.md"]
+    sources <- liftIO $ findSourceDocs cfgDocsDir
 
-    let docHtmls = [cfgBuildDir </> md -<.> "html" | md <- markdowns]
-        indexedHtmls = [cfgBuildDir </> md -<.> "indexed" | md <- markdowns]
+    let docHtmls = [cfgBuildDir </> md -<.> "html" | md <- sources]
+        indexedHtmls = [cfgBuildDir </> md -<.> "indexed" | md <- sources]
         sourceFor :: FilePath -> FilePath
-        sourceFor out = cfgDocsDir </> (dropDirectory1 $ out -<.> "md")
+        sourceFor = getSourceFor cfgDocsDir sources
 
     want $ docHtmls ++ indexedHtmls
 
     cfgBuildDir ++ "//*.html" %> \out -> do
       let md = sourceFor out
       need [md]
-      cmd_ "pandoc --toc -f gfm -t html -s -o" [out, md]
+      pandoc "html" ["--toc", "-s"] md out
 
     cfgBuildDir ++ "//*.txt" %> \out -> do
       let md = sourceFor out
       need [md]
-      cmd_ "pandoc -f gfm -t plain -o" [out, md]
+      pandoc "plain" [] md out
+
+    let metaTemplate = cfgBuildDir </> "meta.template"
+    metaTemplate %> \out -> writeFile' out "$meta-json$"
+
+    cfgBuildDir ++ "//*.json" %> \out -> do
+      let md = sourceFor out
+      need [md, metaTemplate]
+      metas <- gitMetas cfgDocsDir md
+      pandoc "markdown" ([ "-s", "--template", metaTemplate] ++ metas) md out
 
     cfgBuildDir ++ "//*.indexed" %> \out -> do
       let md = sourceFor out
           html = out -<.> "html"
           txt = out -<.> "txt"
+          meta = out -<.> "json"
       need ["_build/elastic-index"]
-      doc <- loadDocument config md txt html
-      putNormal $ "Indexing " ++ (T.unpack (docId doc)) ++ " " ++ md
+      doc <- loadDocument config md txt html meta
+      putNormal $ "Indexing " ++ (T.unpack (docId doc)) ++ " " ++ takeFileName md
       resp <- liftIO $ indexSearchDoc search doc
       writeFile' out (show resp)
 
@@ -70,11 +82,36 @@ main = do
     phony "clean-index" cleanIndex
 
 
-loadDocument  :: Config -> FilePath -> FilePath -> FilePath -> Action Document
-loadDocument Config{..} md txt html = do
-  need [txt, html]
+loadDocument  :: Config -> FilePath -> FilePath -> FilePath -> FilePath -> Action Document
+loadDocument Config{..} md txt html meta = do
+  need [txt, html, meta]
   makeDocument cfgDocsDir md <$> readFile' txt <*> readFile' html
+
+pandoc :: String -> [String] -> FilePath -> FilePath -> Action ()
+pandoc to args f out = command_ [] "pandoc" $ ["-f", from, "-t", to] ++ args ++ ["-o", out, f]
+  where from = case takeExtension f of
+                 "md" -> "gfm"
+                 "org" -> "org"
+                 "rst" -> "rst"
+                 _ -> "markdown"
+
+findSourceDocs :: FilePath -> IO [FilePath]
+findSourceDocs dir = filter notHiddenFile <$> getDirectoryFilesIO dir ["//*." ++ f | f <- formats]
+  where formats = ["md", "org", "rst", "txt"]
 
 notHiddenFile :: FilePath -> Bool
 notHiddenFile = not . any isHidden . splitPath
-  where isHidden = (== ".") . take 1
+  where isHidden = (\p -> p == "." || p == "_") . take 1
+
+getSourceFor :: FilePath -> [FilePath] -> FilePath -> FilePath
+getSourceFor dir sources out = dir </> (lookup' . dropDirectory1 . dropExtension $ out)
+  where
+    sources' = [(dropExtension f, f) | f <- sources]
+    lookup' f = fromMaybe (f <.> "md") $ lookup f sources'
+
+gitMetas :: FilePath -> FilePath -> Action [String]
+gitMetas dir md = do
+  Stdout info <- command [Cwd dir] "git" ["log", "-1", "--format=%aI\t%an\t%ae", makeRelative dir md]
+  let [updated, name, email] = splitOn "\t" info
+      meta k v = ["-M", "updated=" ++ v]
+  pure $ concat [meta "updated" updated, meta "author_name" name, meta "author_email" email]
