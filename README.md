@@ -25,18 +25,21 @@ Put configuration in `config.yml`, see
 
 * [x] better formatting of search results.
 * [ ] respond to private messages
-* [ ] respond to slash commands
+* [x] respond to slash commands
 * [ ] **access control** -- i.e. the bot will only join certain channels
   and respond to certain people.
-* [ ] paging of search results
+* [x] paging of search results
 * [ ] update search index when wiki is changed.
 * [ ] error handling in bot loop
 * [ ] error handling when searching
 * [x] add better elasticsearch index parameters and mappings.
 * [x] Automatic table of contents generation per page.
 * [ ] Generate table of contents for entire wiki.
-* [ ] add pandoc metadata to elasticsearch index
-* [ ] add document last modified info to elasticsearch index
+* [x] add pandoc metadata to elasticsearch index
+* [x] add document last modified info to elasticsearch index
+* [ ] Make pull request with additions to [Bloodhound][] package
+* [ ] Make pull request with additions to [slack-api][] package
+* [ ] support multiple collections of documents.
 
 [Pandoc]: https://pandoc.org/
 [Shake]: http://shakebuild.com/

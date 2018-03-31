@@ -25,6 +25,7 @@ executable wikibot
                      , slack-api
                      , yaml
                      , errors
+                     , exceptions
                      , cryptonite
                      , filepath
                      , containers
@@ -38,6 +39,8 @@ executable wikibot
                      , wai
                      , wai-extra
                      , say
+                     , time
+                     , safe
   default-language:    Haskell2010
 
 executable build
@@ -55,6 +58,7 @@ executable build
                      , slack-api
                      , yaml
                      , errors
+                     , exceptions
                      , cryptonite
                      , filepath
                      , containers
@@ -62,6 +66,8 @@ executable build
                      , pandoc-types
                      , network-uri
                      , split
+                     , time
+                     , safe
   default-language:    Haskell2010
 
 test-suite test
@@ -81,6 +87,7 @@ test-suite test
                      , aeson >=1.2 && <1.3
                      , yaml
                      , errors
+                     , exceptions
                      , hspec
                      , cryptonite
                      , filepath

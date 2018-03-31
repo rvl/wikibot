@@ -10,21 +10,25 @@ import Data.Text.Encoding (encodeUtf8, decodeUtf8)
 import qualified Data.ByteString.Char8 as S8
 import qualified Data.ByteString.Lazy as BL
 import Data.Monoid
-import Formatting (sformat, text, shown, float, int, (%))
+import Formatting (format, sformat, text, stext, shown, float, int, string, (%))
 import Data.Colour (blend)
 import Data.Colour.SRGB (sRGB24show)
 import qualified Data.Colour.Names as C
 import Network.URI (URI(..), relativeTo, parseRelativeReference, parseAbsoluteURI)
 import Network.HTTP.Types.URI (renderSimpleQuery)
-import Data.Maybe (fromJust)
-import Data.Aeson (Value(..), eitherDecode)
+import Data.Maybe (fromJust, catMaybes)
+import Data.Aeson (Value(..), eitherDecode, toJSON)
 import Control.Concurrent.Async
+import Safe (readMay)
 import Say
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import qualified Network.Wai.Handler.Warp as Warp
+import Data.Time.Format (formatTime, defaultTimeLocale)
+import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
+import Data.Time.LocalTime (zonedTimeToUTC)
 
 import Config hiding (SlackConfig)
-import Search (doSearch, WikiSearchResult(..), DocSearch, makeDocSearch)
+import Search (doSearch, WikiSearchResult(..), Document(..), DocSearch, makeDocSearch, Paging(..))
 import SlackEvents
 
 main :: IO ()
@@ -34,21 +38,30 @@ main = do
 
   void $ concurrently
     (rtmMain config docSearch)
-    (apiMain config)
+    (apiMain config docSearch)
 
 -- | RTM is the websocket API for slack
 rtmMain :: Config -> DocSearch -> IO ()
 rtmMain config docSearch = withSlackHandle (slackConfig config) $ wikiBot config docSearch
 
 -- | Server to receive HTTP callbacks from slack
-apiMain :: Config -> IO ()
-apiMain Config{..} = do
-  app <- slackEventsApplication cfg
+apiMain :: Config -> DocSearch -> IO ()
+apiMain cfg@Config{..} docSearch = do
+  app <- slackEventsApplication appSettings
   let middleware = logStdoutDev . dropBasePath (cfgServerBaseURL cfgServer)
   Warp.run (cfgServerListenPort cfgServer) (middleware app)
   where
-    cfg = SlackEventsSettings (cfgSlackVerificationToken cfgSlack) [SlackCommandHandler "/wikisearch" cmd]
-    cmd SlackCommandRequest{..} = return . Just $ "you said " <> slackCommandRequestText
+    appSettings = SlackEventsSettings (cfgSlackVerificationToken cfgSlack) [SlackCommandHandler "/wikisearch" cmd] actionHandler
+    cmd SlackCommandRequest{..} = handleSearchMessage cfg slackCommandRequestUserId docSearch slackCommandRequestText 0 >>= \case
+      Right (txt, ats) -> pure . Just $ SlackResponse txt ats
+      Left _ -> pure . Just $ SlackResponse "Sorry, that didn't work." []
+    actionHandler _ actions _ q _ u = do
+      say $ sformat (stext % " wants more") (userInfoUserName u)
+      case catMaybes (map ((>>= readMay) . fmap T.unpack . actionValue) actions) of
+        (count:_) -> handleSearchMessage cfg (userInfoUserId u) docSearch q (count + 1) >>= \case
+          Right (txt, ats) -> pure . Just $ SlackResponse txt ats
+          Left _ -> pure . Just $ SlackResponse "Sorry, that didn't work." []
+        otherwise -> pure . Just $ SlackResponse "Wikibot is confused." []
 
 slackConfig :: Config -> SlackConfig
 slackConfig Config{..} = SlackConfig { _slackApiToken = cfgSlackBotToken cfgSlack }
@@ -62,7 +75,7 @@ wikiBot cfg docSearch h = forever $ do
       putStrLn $ "ts is " ++ show ts
       shouldRespond <- decideToRespond cid uid subtype msg h
       when shouldRespond $ do
-        handleSearchMessage cfg uid docSearch msg >>= \case
+        handleSearchMessage cfg uid docSearch msg 0 >>= \case
           Right (txt, ats) -> sendRichMessage h cid txt ats >> return ()
           Left _ -> return ()
     (HiddenMessage cid _ ts (Just (SMessageChanged upd))) -> do
@@ -82,11 +95,13 @@ goodSubtype (Just SMeMessage) = True -- fixme: what is memessage
 goodSubtype (Just (SMessageChanged _)) = True
 goodSubtype _ = False
 
-handleSearchMessage :: Config -> UserId -> DocSearch -> Text -> IO (Either String (Text, [Attachment]))
-handleSearchMessage cfg _ docSearch q = fmap formatResults <$> doSearch docSearch q
+handleSearchMessage :: Config -> UserId -> DocSearch -> Text -> Int -> IO (Either String (Text, [Attachment]))
+handleSearchMessage cfg _ docSearch q page =
+  fmap (uncurry formatResults) <$> doSearch docSearch (Paging 0 count) q
   where
-    formatResults :: [WikiSearchResult] -> (Text, [Attachment])
-    formatResults [] = ("wikibot finds nothing about " <> quoteSearch q, [newPageAttachment])
+    count = (page + 1) * 5
+    formatResults :: Int -> [WikiSearchResult] -> (Text, [Attachment])
+    formatResults _ [] = ("wikibot finds nothing about " <> quoteSearch q, [newPageAttachment])
       where
         newPageAttachment = defaultAttachment
           { attachmentFallback = sformat ("Create new page: " % shown) newUrl
@@ -96,35 +111,33 @@ handleSearchMessage cfg _ docSearch q = fmap formatResults <$> doSearch docSearc
           }
         newUrl = relURI "_new" `relativeTo` cfgWikiURL cfg
         newUrl' = newUrl { uriQuery = queryString [("wiki[body]", q)] }
-    formatResults rs = ( "results for " <> quoteSearch q
-                       , map fmt first ++ if null rest then [] else [more])
+    formatResults total rs = (sformat (int % " results for " % stext) total (quoteSearch q)
+                             , map fmt rs ++ if length rs < total then [more] else [])
       where
-        count = 5
-        (first, rest) = splitAt count rs
         fmt :: WikiSearchResult -> Attachment
         fmt WikiSearchResult{..} = defaultAttachment
           { attachmentFallback = uriText wikiResURL
-          , attachmentTitle = Just wikiResTitle
+          , attachmentTitle = Just (docTitle wikiResDoc)
           , attachmentTitleLink = Just $ uriText wikiResURL
           , attachmentText = Nothing -- wikiResHighlight / summary?
           , attachmentAuthorName = Nothing -- last edited by? is quite prominent
           , attachmentAuthorLink = Nothing -- last edited by?
-          , attachmentFooter = fmap (sformat ("score = " % float)) wikiResScore -- score, document info
+          , attachmentFooter = Just $ sformat ("updated by " % stext) (docUpdatedBy wikiResDoc) -- score, document info
           , attachmentColor = maybe DefaultColor (CustomColor . scoreColour) wikiResScore
-          , attachmentTs = Nothing -- last modified time
+          , attachmentTs = Just . utcTimeToPOSIXSeconds . zonedTimeToUTC . docUpdatedOn $ wikiResDoc  -- last modified time
           }
-        moreDesc = sformat ("Showing " % int % " of " % int % " results") count (length rs)
+        moreDesc = sformat ("Showing " % int % " of " % int % " results") count total
         more = defaultAttachment
           { attachmentFallback = moreDesc
           , attachmentText = Just moreDesc
           , attachmentActions = [moreResultsAction]
-          , attachmentCallbackId = Just "yo"
+          , attachmentCallbackId = Just q
           }
         moreResultsAction = Action
           { actionName = "more"
           , actionText = "More..."
           , actionType = ButtonType
-          , actionValue = Nothing
+          , actionValue = Just (sformat int page)
           , actionStyle = Just DefaultStyle
           , actionOptions = []
           }

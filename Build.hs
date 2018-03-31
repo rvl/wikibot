@@ -1,18 +1,15 @@
-{-# LANGUAGE NoOverloadedStrings, RecordWildCards #-}
+{-# LANGUAGE NoOverloadedStrings, RecordWildCards, LambdaCase #-}
 
 import Development.Shake
-import Development.Shake.Command
 import Development.Shake.FilePath
-import Development.Shake.Util
-import Database.V5.Bloodhound
-import Network.HTTP.Client
-import GHC.Generics
 import qualified Data.Text as T
 import Data.Text (Text)
 import Data.Aeson
-import Control.Monad (void, when)
+import Control.Monad (void)
 import Data.Maybe (fromMaybe)
 import Data.List.Split (splitOn)
+import Data.Time.LocalTime (ZonedTime(..))
+import qualified Data.ByteString.Char8 as S8
 
 import Config
 import Search
@@ -59,8 +56,8 @@ main = do
       need ["_build/elastic-index"]
       doc <- loadDocument config md txt html meta
       putNormal $ "Indexing " ++ (T.unpack (docId doc)) ++ " " ++ takeFileName md
-      resp <- liftIO $ indexSearchDoc search doc
-      writeFile' out (show resp)
+      void . liftIO $ indexSearchDoc search doc
+      writeFile' out (T.unpack (docId doc))
 
     cfgBuildDir </> "elastic-index" %> \out -> do
       putNormal "Setting up elasticsearch index"
@@ -85,7 +82,13 @@ main = do
 loadDocument  :: Config -> FilePath -> FilePath -> FilePath -> FilePath -> Action Document
 loadDocument Config{..} md txt html meta = do
   need [txt, html, meta]
-  makeDocument cfgDocsDir md <$> readFile' txt <*> readFile' html
+  eitherDecodeStrict <$> liftIO (S8.readFile meta) >>= \case
+    Right DocMetadata{..} -> makeDocument cfgDocsDir md
+                             <$> readFile' txt
+                             <*> readFile' html
+                             <*> pure mdUpdated
+                             <*> pure mdAuthorName
+    Left e -> error e
 
 pandoc :: String -> [String] -> FilePath -> FilePath -> Action ()
 pandoc to args f out = command_ [] "pandoc" $ ["-f", from, "-t", to] ++ args ++ ["-o", out, f]
@@ -110,8 +113,29 @@ getSourceFor dir sources out = dir </> (lookup' . dropDirectory1 . dropExtension
     lookup' f = fromMaybe (f <.> "md") $ lookup f sources'
 
 gitMetas :: FilePath -> FilePath -> Action [String]
-gitMetas dir md = do
-  Stdout info <- command [Cwd dir] "git" ["log", "-1", "--format=%aI\t%an\t%ae", makeRelative dir md]
-  let [updated, name, email] = splitOn "\t" info
-      meta k v = ["-M", "updated=" ++ v]
-  pure $ concat [meta "updated" updated, meta "author_name" name, meta "author_email" email]
+gitMetas dir md = toMetas <$> command [Cwd dir] "git" log
+  where
+    log = ["log", "-1", "--format=%aI\t%an\t%ae", makeRelative dir md]
+    toMetas (Stdout info) = concat $ case splitOn "\t" info of
+      [updated, name, email] -> [meta "updated" updated, meta "author_name" name, meta "author_email" email]
+      _ -> []
+    meta k v = ["-M", k ++ "=" ++ v]
+
+data DocMetadata = DocMetadata
+  { mdUpdated :: ZonedTime
+  , mdAuthorName :: Text
+  , mdAuthorEmail :: Text
+  } deriving (Show)
+
+instance FromJSON DocMetadata where
+  parseJSON = withObject "DocMetadata" $ \o ->
+    DocMetadata <$> o .: (T.pack "updated")
+    <*> o .: (T.pack "author_name")
+    <*> o .: (T.pack "author_email")
+
+{-
+instance FromJSON ZonedTime where
+  parseJSON = withString "ISO8601" $ \s -> case parseTimeM True defaultTimeLocale (iso8601DateFormat (Just "%H:%M:%S%z")) s of
+    Just t -> pure t
+    Nothing -> error "datetime parsing failed"
+-}

@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveGeneric, PackageImports, RecordWildCards, OverloadedStrings, Rank2Types #-}
+{-# LANGUAGE DeriveGeneric, PackageImports, RecordWildCards, OverloadedStrings, Rank2Types, DeriveDataTypeable #-}
 
 module Search
   ( Document(..)
@@ -10,11 +10,13 @@ module Search
   , deleteDocIndex
   , createDocIndex
   , indexSearchDoc
+  , Paging(..)
   ) where
 
 import Database.V5.Bloodhound
 import Network.HTTP.Client
-import GHC.Generics
+import Network.HTTP.Types.Status (statusIsSuccessful)
+import GHC.Generics hiding (from)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Crypto.Hash
@@ -22,23 +24,25 @@ import qualified Data.ByteString.Char8 as S8
 import qualified Data.ByteString.Lazy.Char8 as LS8
 import Data.Aeson
 import Development.Shake.FilePath
-import Data.Text.Encoding (decodeUtf8)
-import Data.ByteString (ByteString)
 import Control.Monad (void, when)
-import Data.Monoid ((<>))
-import Data.Maybe (fromMaybe)
 import System.FilePath.Posix (dropExtension, takeBaseName)
 import qualified Data.Map.Lazy as M
 import Network.URI (URI, relativeTo, parseRelativeReference)
+import Control.Monad.Catch
+import Data.Typeable
+import Data.Time.LocalTime (ZonedTime(..))
+import Data.Maybe (catMaybes)
 
 import Config
 
-data Document = Document { docId :: Text
-                         , docContent :: Text
-                         , docHTML :: Text
-                         , docFileName :: FilePath
-                         , docTitle  :: Text
-                         } deriving (Eq, Generic, Show)
+data Document = Document { docId        :: Text
+                         , docContent   :: Text
+                         , docHTML      :: Text
+                         , docFileName  :: FilePath
+                         , docTitle     :: Text
+                         , docUpdatedBy :: Text
+                         , docUpdatedOn :: ZonedTime
+                         } deriving (Generic, Show)
 
 instance ToJSON Document where
   toJSON = genericToJSON customOptions
@@ -57,18 +61,20 @@ instance ToJSON DocumentMapping where
                                      , "analyzer" .= ("title_analyzer" :: Text) ]
                , "content" .= object [ "type" .= ("text" :: Text)
                                      , "analyzer" .= ("html_analyzer" :: Text) ]
-               , "updated" .= object [ "type" .= ("date" :: Text)
-                                     , "format" .= ("strict_date_optional_time||epoch_millis" :: Text ) ]
+               , "updated_on" .= object [ "type" .= ("date" :: Text)
+                                        , "format" .= ("strict_date_optional_time||epoch_millis" :: Text ) ]
                ]
       ]
 
-makeDocument :: FilePath -> FilePath -> String -> String -> Document
-makeDocument base doc txt html = Document
+makeDocument :: FilePath -> FilePath -> String -> String -> ZonedTime -> Text -> Document
+makeDocument base doc txt html dt author = Document
   { docId = T.pack $ makeDocumentId name
   , docContent = T.pack txt
   , docHTML = T.pack html
   , docFileName = name
   , docTitle = titleFromFilename doc
+  , docUpdatedBy = author
+  , docUpdatedOn = dt
   }
   where name = makeRelative base doc
 
@@ -137,44 +143,62 @@ wikiAnalysis = Analysis
 deleteDocIndex :: DocSearch -> IO ()
 deleteDocIndex DocSearch{..} = void . docSearchRun $ deleteIndex docSearchIdx
 
-indexSearchDoc :: DocSearch -> Document -> IO (Response LS8.ByteString)
-indexSearchDoc DocSearch{..} doc = docSearchRun $
-  indexDocument docSearchIdx docSearchMapping defaultIndexDocumentSettings doc (DocId (docId doc))
+indexSearchDoc :: DocSearch -> Document -> IO LS8.ByteString
+indexSearchDoc DocSearch{..} doc = docSearchRun index >>= handleIndexResponse
+  where
+    index = indexDocument docSearchIdx docSearchMapping defaultIndexDocumentSettings doc (DocId (docId doc))
+
+handleIndexResponse :: Reply -> IO LS8.ByteString
+handleIndexResponse r | statusIsSuccessful (responseStatus r) = pure body
+                      | otherwise = throwM $ IndexingError body
+  where body = responseBody r
+
+data IndexingError = IndexingError LS8.ByteString
+  deriving (Typeable)
+instance Show IndexingError where
+  show (IndexingError r) = "IndexingError: " ++ show r
+instance Exception IndexingError
 
 data WikiSearchResult = WikiSearchResult
-  { wikiResTitle :: Text
+  { wikiResDoc :: Document
   , wikiResURL :: URI
   , wikiResHighlight :: Maybe Text
   , wikiResScore :: Maybe Double
-  } deriving (Generic, Show, Eq)
+  } deriving (Generic, Show)
 
-doSearch :: DocSearch -> Text -> IO (Either String [WikiSearchResult])
-doSearch DocSearch{..} q = do
+doSearch :: DocSearch -> Paging -> Text -> IO (Either String (Int, [WikiSearchResult]))
+doSearch DocSearch{..} p q = do
   putStrLn $ "search for " ++ (T.unpack q)
-  reply <- docSearchRun $ searchAll search
+  reply <- docSearchRun $ searchByIndex docSearchIdx (withPaging p search)
   -- putStrLn $ "reply: " ++ (LS8.unpack (responseBody reply))
   let res = eitherDecode (responseBody reply) :: Either String (SearchResult Document)
       hs = searchHits <$> res :: Either String (SearchHits Document)
   return (makeResults <$> hs)
   where
-    makeResults :: SearchHits Document -> [WikiSearchResult]
-    makeResults SearchHits{..} = map (makeResult docSearchConfig) hits
+    makeResults :: SearchHits Document -> (Int, [WikiSearchResult])
+    makeResults SearchHits{..} = (hitsTotal, catMaybes $ map (makeResult docSearchConfig) hits)
     query = QueryMultiMatchQuery $ mkMultiMatchQuery [FieldName "title^3", FieldName "content"] (QueryString q)
     search = mkHighlightSearch (Just query) highlights
     highlights = Highlights Nothing [FieldHighlight (FieldName "content") Nothing]
 
-makeResult :: Config -> Hit Document -> WikiSearchResult
-makeResult Config{..} hit = WikiSearchResult title url hl (hitScore hit)
+makeResult :: Config -> Hit Document -> Maybe WikiSearchResult
+makeResult Config{..} hit = make <$> hitSource hit
   where
+    make doc = WikiSearchResult doc url hl (hitScore hit)
     hl = T.unlines . map toMarkdown <$> (hitHighlight hit >>= M.lookup "content")
     docId = T.pack . show . hitDocId $ hit
     url = maybe cfgWikiURL (makeDocUrl cfgWikiURL) $ hitSource hit
-    title = fromMaybe "No title" (docTitle <$> hitSource hit)
 
 makeDocUrl :: URI -> Document -> URI
-makeDocUrl baseUrl Document{..} = name `relativeTo` baseUrl
-  where
-    Just name = parseRelativeReference (dropExtension docFileName)
+makeDocUrl baseUrl Document{..} =
+  case parseRelativeReference (dropExtension docFileName) of
+    Just name -> name `relativeTo` baseUrl
+    Nothing -> baseUrl
 
 toMarkdown :: Text -> Text
 toMarkdown = T.replace "<em>" "*" . T.replace "</em>" "*"
+
+data Paging = Paging { pagingFrom :: Int, pagingSize :: Int }
+
+withPaging :: Paging -> Search -> Search
+withPaging (Paging f s) search = search { from = From f, size = Size s }
