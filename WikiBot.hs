@@ -26,9 +26,10 @@ import qualified Network.Wai.Handler.Warp as Warp
 import Data.Time.Format (formatTime, defaultTimeLocale)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Time.LocalTime (zonedTimeToUTC)
+import Control.Monad.Catch (try)
 
 import Config hiding (SlackConfig)
-import Search (doSearch, WikiSearchResult(..), Document(..), DocSearch, makeDocSearch, Paging(..))
+import Search (doSearch, WikiSearchResult(..), Document(..), DocSearch, makeDocSearch, Paging(..), SearchError(..))
 import SlackEvents
 
 main :: IO ()
@@ -47,21 +48,23 @@ rtmMain config docSearch = withSlackHandle (slackConfig config) $ wikiBot config
 -- | Server to receive HTTP callbacks from slack
 apiMain :: Config -> DocSearch -> IO ()
 apiMain cfg@Config{..} docSearch = do
-  app <- slackEventsApplication appSettings
+  app <- eventsApplication appSettings
   let middleware = logStdoutDev . dropBasePath (cfgServerBaseURL cfgServer)
   Warp.run (cfgServerListenPort cfgServer) (middleware app)
   where
-    appSettings = SlackEventsSettings (cfgSlackVerificationToken cfgSlack) [SlackCommandHandler "/wikisearch" cmd] actionHandler
-    cmd SlackCommandRequest{..} = handleSearchMessage cfg slackCommandRequestUserId docSearch slackCommandRequestText 0 >>= \case
-      Right (txt, ats) -> pure . Just $ SlackResponse txt ats
-      Left _ -> pure . Just $ SlackResponse "Sorry, that didn't work." []
-    actionHandler _ actions _ q _ u = do
-      say $ sformat (stext % " wants more") (userInfoUserName u)
-      case catMaybes (map ((>>= readMay) . fmap T.unpack . actionValue) actions) of
-        (count:_) -> handleSearchMessage cfg (userInfoUserId u) docSearch q (count + 1) >>= \case
-          Right (txt, ats) -> pure . Just $ SlackResponse txt ats
-          Left _ -> pure . Just $ SlackResponse "Sorry, that didn't work." []
-        otherwise -> pure . Just $ SlackResponse "Wikibot is confused." []
+    appSettings = EventsApplication (cfgSlackVerificationToken cfgSlack) [("/wikisearch", cmd)] actionHandler (const (pure Nothing))
+    cmd CommandRequest{..} = handleSearchMessage cfg slackCommandRequestUserId docSearch slackCommandRequestText 0 >>= \case
+      Right (txt, ats) -> pure . Just $ EventResponse txt ats
+      Left _ -> pure . Just $ EventResponse "Sorry, that didn't work." []
+    actionHandler Interaction{..} = do
+      let UserInfo{..} = interactionUser
+          q = interactionCallbackId
+      say $ sformat (stext % " wants more") userInfoUserName
+      case catMaybes (map ((>>= readMay) . fmap T.unpack . actionValue) interactionActions) of
+        (count:_) -> handleSearchMessage cfg userInfoUserId docSearch q (count + 1) >>= \case
+          Right (txt, ats) -> pure . Just $ EventResponse txt ats
+          Left _ -> pure . Just $ EventResponse "Sorry, that didn't work." []
+        otherwise -> pure . Just $ EventResponse "Wikibot is confused." []
 
 slackConfig :: Config -> SlackConfig
 slackConfig Config{..} = SlackConfig { _slackApiToken = cfgSlackBotToken cfgSlack }
@@ -76,8 +79,10 @@ wikiBot cfg docSearch h = forever $ do
       shouldRespond <- decideToRespond cid uid subtype msg h
       when shouldRespond $ do
         handleSearchMessage cfg uid docSearch msg 0 >>= \case
-          Right (txt, ats) -> sendRichMessage h cid txt ats >> return ()
-          Left _ -> return ()
+          Right (txt, ats) -> void $ sendRichMessage h cid txt ats
+          Left e -> do
+            putStrLn $ "Problem searching: " ++ show e
+            void $ sendRichMessage h cid "Wikibot can't think at the moment" []
     (HiddenMessage cid _ ts (Just (SMessageChanged upd))) -> do
       putStrLn $ "ts is " ++ show ts
       putStrLn $ "update is " ++ show upd
@@ -95,9 +100,9 @@ goodSubtype (Just SMeMessage) = True -- fixme: what is memessage
 goodSubtype (Just (SMessageChanged _)) = True
 goodSubtype _ = False
 
-handleSearchMessage :: Config -> UserId -> DocSearch -> Text -> Int -> IO (Either String (Text, [Attachment]))
+handleSearchMessage :: Config -> UserId -> DocSearch -> Text -> Int -> IO (Either SearchError (Text, [Attachment]))
 handleSearchMessage cfg _ docSearch q page =
-  fmap (uncurry formatResults) <$> doSearch docSearch (Paging 0 count) q
+  try (uncurry formatResults <$> doSearch docSearch (Paging 0 count) q)
   where
     count = (page + 1) * 5
     formatResults :: Int -> [WikiSearchResult] -> (Text, [Attachment])

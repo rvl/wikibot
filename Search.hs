@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveGeneric, PackageImports, RecordWildCards, OverloadedStrings, Rank2Types, DeriveDataTypeable #-}
+{-# LANGUAGE DeriveGeneric, PackageImports, RecordWildCards, OverloadedStrings, Rank2Types, DeriveDataTypeable, ScopedTypeVariables #-}
 
 module Search
   ( Document(..)
@@ -11,6 +11,8 @@ module Search
   , createDocIndex
   , indexSearchDoc
   , Paging(..)
+  , IndexingError(..)
+  , SearchError(..)
   ) where
 
 import Database.V5.Bloodhound
@@ -159,6 +161,15 @@ instance Show IndexingError where
   show (IndexingError r) = "IndexingError: " ++ show r
 instance Exception IndexingError
 
+data SearchError = SearchErrorBadResponse String -- ^ ElasticSearch JSON response was the wrong type
+                 | SearchErrorHttp HttpException -- ^ Error connecting to ElasticSearch by HTTP
+                 | SearchErrorFailure HttpExceptionContent -- ^ Call to ElasticSearch failed
+  deriving (Typeable)
+instance Show SearchError where
+  show (SearchErrorBadResponse r) = "Could not decode ElasticSearch response: " ++ show r
+  show (SearchErrorHttp exc) = "Could not connect to ElasticSearch: " ++ show exc
+instance Exception SearchError
+
 data WikiSearchResult = WikiSearchResult
   { wikiResDoc :: Document
   , wikiResURL :: URI
@@ -166,20 +177,31 @@ data WikiSearchResult = WikiSearchResult
   , wikiResScore :: Maybe Double
   } deriving (Generic, Show)
 
-doSearch :: DocSearch -> Paging -> Text -> IO (Either String (Int, [WikiSearchResult]))
-doSearch DocSearch{..} p q = do
+doSearch :: DocSearch -> Paging -> Text -> IO (Int, [WikiSearchResult])
+doSearch ds@DocSearch{..} p q = do
   putStrLn $ "search for " ++ (T.unpack q)
-  reply <- docSearchRun $ searchByIndex docSearchIdx (withPaging p search)
-  -- putStrLn $ "reply: " ++ (LS8.unpack (responseBody reply))
-  let res = eitherDecode (responseBody reply) :: Either String (SearchResult Document)
-      hs = searchHits <$> res :: Either String (SearchHits Document)
-  return (makeResults <$> hs)
+  res <- handleSearch ds $ searchByIndex docSearchIdx (withPaging p search)
+  pure $ makeResults $ searchHits res
   where
     makeResults :: SearchHits Document -> (Int, [WikiSearchResult])
     makeResults SearchHits{..} = (hitsTotal, catMaybes $ map (makeResult docSearchConfig) hits)
     query = QueryMultiMatchQuery $ mkMultiMatchQuery [FieldName "title^3", FieldName "content"] (QueryString q)
     search = mkHighlightSearch (Just query) highlights
     highlights = Highlights Nothing [FieldHighlight (FieldName "content") Nothing]
+
+handleSearch :: forall a. FromJSON a => DocSearch -> BH IO Reply -> IO (SearchResult a)
+handleSearch DocSearch{..} search = catch (docSearchRun search) handleExc >>= handleReply
+  where
+    handleReply :: Reply -> IO (SearchResult a)
+    handleReply r | statusIsSuccessful (responseStatus r) = case eitherDecode (responseBody r) of
+                           Right res -> pure res
+                           Left err -> throwM $ SearchErrorBadResponse err
+                  | otherwise = do
+                      let chunk = LS8.take 1024 $ responseBody r
+                      let res' = fmap (const ()) r
+                      throwM $ SearchErrorFailure $ StatusCodeException res' (LS8.toStrict chunk)
+    handleExc :: HttpException -> IO Reply
+    handleExc = throwM . SearchErrorHttp
 
 makeResult :: Config -> Hit Document -> Maybe WikiSearchResult
 makeResult Config{..} hit = make <$> hitSource hit
