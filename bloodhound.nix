@@ -11,8 +11,8 @@ mkDerivation {
   src = fetchFromGitHub {
     owner = "rvl";
     repo = "bloodhound";
-    rev = "4335e9a8d1f887f822f2a63851965edf2a293fd8";
-    sha256 = "0qq7887rfybhl0gv4x7qvhznm1hlxhfsrvxv0z2h022j4ln7ryh6";
+    rev = "bfd3c4efe62b21c28fe3d244ad36e9b7d5562662";
+    sha256 = "0iy0nxwj7zdy7qp5k0dxf85n87ljm8wkqaq9070c9x78b2g6q56w";
   };
   libraryHaskellDepends = [
     aeson base blaze-builder bytestring containers data-default-class

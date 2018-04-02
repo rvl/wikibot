@@ -1,27 +1,26 @@
-{ mkDerivation, aeson, base, bytestring, containers, errors
-, fetchgit, hashable, io-streams, lens, lens-aeson, monad-loops
-, mtl, network, network-uri, scientific, stdenv, text, time
-, time-locale-compat, tls, transformers, websockets, wreq, wuss
+{ mkDerivation, aeson, attoparsec, base, bytestring, containers
+, errors, hashable, http-types, io-streams, lens, lens-aeson
+, monad-loops, mtl, network, network-uri, safe, scientific, scotty
+, stdenv, text, time, time-locale-compat, tls, transformers, wai
+, wai-extra, websockets, wreq, wuss, fetchFromGitHub
 }:
 mkDerivation {
   pname = "slack-api";
-  version = "0.12";
-  # src = fetchgit {
-  #   url = "https://github.com/mpickering/slack-api.git";
-  #   sha256 = "16gzqsk5g0d3d84x8d992b5xpsy6dj68k40nlbcdar7i2vfzrrcd";
-  #   rev = "02553f682117dd2422ab9418ff5df9914d7047ea";
-  # };
-  src = fetchgit {
-    url = "https://github.com/jkarni/slack-api.git";
-    rev = "58e13fa6df986a27f90bdacf1f3e25823e77eee3";
-    sha256 = "0vjqqagpl6lfr6gjhh1r77462j0fh375g7832cgy2yy8pycgdmpp";
+  version = "0.14";
+  # my fork
+  src = fetchFromGitHub {
+    owner = "rvl";
+    repo = "slack-api";
+    rev = "73f9ba08ee9e89d67f08a44c97b86f78f9852959";
+    sha256 = "034dqxbsbb4k453g7npb6ykkr5xbx0g9kp8kknkahq6fag02zxmy";
   };
   isLibrary = true;
   isExecutable = true;
   libraryHaskellDepends = [
-    aeson base bytestring containers errors hashable io-streams lens
-    lens-aeson monad-loops mtl network network-uri scientific text time
-    time-locale-compat tls transformers websockets wreq wuss
+    aeson attoparsec base bytestring containers errors hashable
+    http-types io-streams lens lens-aeson monad-loops mtl network
+    network-uri safe scientific scotty text time time-locale-compat tls
+    transformers wai wai-extra websockets wreq wuss
   ];
   testHaskellDepends = [ base ];
   description = "Bindings to the Slack RTM API";

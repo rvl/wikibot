@@ -15,6 +15,8 @@ let
         # https://github.com/mpickering/slack-api/issues/84
         # Problem 2: no rich message buttons => use jkarni fork
         # https://github.com/jkarni/slack-api
+        # Problem 3: missing events API => use my fork
+        # https://github.com/rvl/slack-api
         slack-api = pkgs.haskell.lib.dontCheck (self.callPackage ./slack-api.nix {});
 
         # add missing char filters to mappings api

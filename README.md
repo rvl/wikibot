@@ -21,6 +21,13 @@ wiki then it can't be indexed by Google.
 Put configuration in `config.yml`, see
 [`config-example.yml`](./config-example.yml) for the possible options.
 
+## Building
+
+This project depends on forked
+[Bloodhound](https://github.com/rvl/bloodhound) and
+[slack-api](https://github.com/rvl/bloodhound) packages. Use the
+provided nix files to build with the forked packages.
+
 ## TODO
 
 * [x] better formatting of search results.
