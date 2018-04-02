@@ -5,6 +5,8 @@ module Config
   , SlackConfig(..)
   , ElasticConfig(..)
   , ServerConfig(..)
+  , RespondTo(..)
+  , RespondWhere(..)
   , getConfig
   , customOptions
   ) where
@@ -61,9 +63,9 @@ instance FromJSON ServerConfig where
   parseJSON = genericParseJSON (customOptions' 2)
 
 instance FromJSON RespondWhere where
-  parseJSON = withText "Entity" $ \t -> case T.take 1 t of
-    "@" -> pure $ RespondToUser t
-    "#" -> pure $ RespondInChannel t
+  parseJSON = withText "Entity" $ \t -> case T.splitAt 1 t of
+    ("@", u) -> pure $ RespondToUser u
+    ("#", c) -> pure $ RespondInChannel c
 
 instance FromJSON RespondTo where
   parseJSON (String "*") = pure RespondToAll

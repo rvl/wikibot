@@ -26,10 +26,12 @@ Put configuration in `config.yml`, see
 * [x] better formatting of search results.
 * [x] respond to private messages
 * [x] respond to slash commands
-* [ ] only respond in channel when @addressed
-* [ ] **access control** -- i.e. the bot will only join certain channels
+* [x] only respond in channel when @addressed
+* [x] **access control** -- i.e. the bot will only join certain channels
   and respond to certain people.
+* [ ] access control for /wikisearch slash command
 * [x] paging of search results
+* [x] button for less results
 * [ ] update search index when wiki is changed.
 * [x] error handling in bot loop
 * [x] error handling when searching

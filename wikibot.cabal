@@ -23,6 +23,7 @@ executable wikibot
                      , bytestring >=0.10 && <0.11
                      , aeson >=1.2 && <1.3
                      , slack-api
+                     , transformers >= 0.3
                      , yaml
                      , errors
                      , exceptions
