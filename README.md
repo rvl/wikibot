@@ -2,8 +2,6 @@
 
 *Your GitHub Wiki is now a Slack Bot*
 
-This is currently at "proof of concept" stage.
-
 ## Why?
 
 Because GitHub Wiki search is a little bit crap. If you have a private
@@ -12,9 +10,9 @@ wiki then it can't be indexed by Google.
 ## How it works
 
 1. The wiki git repo is checked out.
-2. Markdown files are converted to HTML with [Pandoc]() and [Shake]().
-3. [ElasticSearch]() indexes the HTML files (via [Bloodhound]()).
-4. A [slack-api]() bot connects to Slack and responds to search commands.
+2. Markdown files are converted to HTML with [Pandoc][] and [Shake][].
+3. [ElasticSearch][] indexes the HTML files (via [Bloodhound][]).
+4. A [slack-api][] bot connects to Slack and responds to search commands.
 
 ## Configuration
 
@@ -25,7 +23,7 @@ Put configuration in `config.yml`, see
 
 This project depends on forked
 [Bloodhound](https://github.com/rvl/bloodhound) and
-[slack-api](https://github.com/rvl/bloodhound) packages. Use the
+[slack-api](https://github.com/rvl/slack-api) packages. Use the
 provided nix files to build with the forked packages.
 
 ## TODO
@@ -36,7 +34,7 @@ provided nix files to build with the forked packages.
 * [x] only respond in channel when @addressed
 * [x] **access control** -- i.e. the bot will only join certain channels
   and respond to certain people.
-* [ ] access control for /wikisearch slash command
+* [x] access control for /wikisearch slash command
 * [x] paging of search results
 * [x] button for less results
 * [ ] update search index when wiki is changed.
@@ -50,6 +48,7 @@ provided nix files to build with the forked packages.
 * [x] Make pull request with additions to [Bloodhound][] package
 * [ ] Make pull request with additions to [slack-api][] package
 * [ ] support multiple collections of documents.
+* [ ] NixOS module
 
 [Pandoc]: https://pandoc.org/
 [Shake]: http://shakebuild.com/

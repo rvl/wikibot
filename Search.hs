@@ -179,7 +179,6 @@ data WikiSearchResult = WikiSearchResult
 
 doSearch :: DocSearch -> Paging -> Text -> IO (Int, [WikiSearchResult])
 doSearch ds@DocSearch{..} p q = do
-  putStrLn $ "search for " ++ (T.unpack q)
   res <- handleSearch ds $ searchByIndex docSearchIdx (withPaging p search)
   pure $ makeResults $ searchHits res
   where

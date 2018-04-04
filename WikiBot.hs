@@ -19,11 +19,11 @@ import Data.Colour.SRGB (sRGB24show)
 import qualified Data.Colour.Names as C
 import Network.URI (URI(..), relativeTo, parseRelativeReference)
 import Network.HTTP.Types.URI (renderSimpleQuery)
-import Data.Maybe (fromJust, fromMaybe, catMaybes)
+import Data.Maybe (fromJust, fromMaybe, catMaybes, isJust)
 import Control.Concurrent.Async
 import Safe (readMay, headMay)
 import Say
-import Network.Wai.Middleware.RequestLogger (logStdoutDev)
+import Network.Wai.Middleware.RequestLogger (logStdout)
 import qualified Network.Wai.Handler.Warp as Warp
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Time.LocalTime (zonedTimeToUTC)
@@ -35,58 +35,71 @@ import Search (doSearch, WikiSearchResult(..), Document(..), DocSearch, makeDocS
 main :: IO ()
 main = do
   Right config@Config{..} <- getConfig "config.yml"
-  let docSearch = makeDocSearch config
+  wikiBot config (makeDocSearch config)
 
-  void $ concurrently
-    (rtmMain config docSearch)
-    (apiMain config docSearch)
-
--- | RTM is the websocket API for slack
-rtmMain :: Config -> DocSearch -> IO ()
-rtmMain config docSearch = withSlackHandle (slackConfig config) $ wikiBot config docSearch
+-- | Connect to Slack RTM then run both the RTM handlers and events
+-- API handlers.
+wikiBot :: Config -> DocSearch -> IO ()
+wikiBot config docSearch = void $ withSlackHandle (slackConfig config) $ \h ->
+  concurrently (rtmMain config docSearch h) (apiMain config docSearch h)
 
 -- | Server to receive HTTP callbacks from slack
-apiMain :: Config -> DocSearch -> IO ()
-apiMain cfg@Config{..} docSearch = do
+apiMain :: Config -> DocSearch -> SlackHandle -> IO ()
+apiMain cfg@Config{..} docSearch h = do
   app <- eventsApplication appSettings
+  say $ sformat ("Events API server listening on port " % int) (cfgServerListenPort cfgServer)
   Warp.run (cfgServerListenPort cfgServer) (middleware app)
   where
-    middleware = logStdoutDev
+    middleware = logStdout
     appSettings = EventsApplication (cfgSlackVerificationToken cfgSlack)
-      [("/wikisearch", slashCmd)] actionHandler (const (pure Nothing))
+      [("/wikisearch", slashCommand cfg docSearch h)]
+      (handleInteraction cfg docSearch h)
+      (const (pure Nothing))
 
-    -- fixme: check permission of slackCommandRequestUserId
-    slashCmd CommandRequest{..} = Just <$> handleSearchMessage cfg Nothing docSearch slackCommandRequestText 0
+-- | Responds to /wikisearch requests.
+slashCommand :: Config -> DocSearch -> SlackHandle -> CommandRequest -> IO (Maybe EventResponse)
+slashCommand cfg docSearch h CommandRequest{..} = Just <$> (decide >>= respond)
+  where
+    respond True  = handleSearchMessage cfg Nothing docSearch slackCommandRequestText 0
+    respond False = pure $ EventResponse "Wikibot is not allowed to talk to you" []
+    decide = decideToRespondEvents cfg h slackCommandRequestChannelId slackCommandRequestUserId
 
-    actionHandler Interaction{..} = do
-      let UserInfo{..} = interactionUser
-          q = interactionCallbackId
-          action = headMay $ map actionName interactionActions
-      say $ sformat (stext % " wants " % string) userInfoUserName (show action)
-      -- fixme: check permission of userInfoUserId
-      case catMaybes [ pageMod a <$> pageNum a | a <- interactionActions ] of
-        (page:_) -> Just <$> handleSearchMessage cfg Nothing docSearch q page
-        _       -> pure . Just $ EventResponse "Wikibot is confused." []
+-- | Responds to interaction events (more/less button presses).
+handleInteraction :: Config -> DocSearch -> SlackHandle -> Interaction -> IO (Maybe EventResponse)
+handleInteraction cfg docSearch h Interaction{..} =
+  decide >>= \t -> if t then Just <$> respond else pure Nothing
+  where
+    respond = case catMaybes (map newPage interactionActions) of
+      (page:_) -> do
+        say $ sformat (stext % " wants " % stext) (userInfoUserName interactionUser) (mconcat $ map actionName interactionActions)
+        handleSearchMessage cfg Nothing docSearch interactionCallbackId page
+      []       -> pure $ EventResponse "Wikibot is confused." []
 
-    pageNum :: Action -> Maybe Int
-    pageNum = (>>= readMay) . fmap T.unpack . actionValue
-    pageMod :: Action -> (Int -> Int)
-    pageMod a = case actionName a of
-      "more" -> succ
-      "less" -> pred
-      _      -> id
+    newPage a = pageNum a >>= pageMod a
+      where
+        pageNum :: Action -> Maybe Int
+        pageNum = (>>= readMay) . fmap T.unpack . actionValue
+        pageMod :: Action -> Int -> Maybe Int
+        pageMod a p = case actionName a of
+          "more" -> Just (p + 1)
+          "less" -> Just (p - 1)
+          _      -> Nothing
+
+    -- fixme: is channel id returned in message?
+    decide = decideToRespondEvents cfg h (Id "") (userInfoUserId interactionUser)
 
 slackConfig :: Config -> SlackConfig
 slackConfig Config{..} = SlackConfig { _slackApiToken = cfgSlackBotToken cfgSlack }
 
-wikiBot :: Config -> DocSearch -> SlackHandle -> IO ()
-wikiBot cfg docSearch h = forever $ do
+-- | RTM is the websocket API for slack
+rtmMain :: Config -> DocSearch -> SlackHandle -> IO ()
+rtmMain cfg docSearch h = forever $ do
   event <- getNextEvent h
   case event of
     Hello -> say "Connected to slack."
     (Message cid (UserComment uid) msg ts subtype _) -> do
       let msg' = Slack.format msg
-      decideToRespondRTM h (cfgSlackRespond $ cfgSlack cfg) cid uid subtype msg' >>= \case
+      decideToRespondRTM cfg h cid uid subtype msg' >>= \case
         Just query -> do
           EventResponse txt ats <- handleSearchMessage cfg (Just uid) docSearch query 0
           void $ sendRichMessage h cid txt ats
@@ -98,28 +111,28 @@ wikiBot cfg docSearch h = forever $ do
       pure ()
     _ -> pure ()
 
-decideToRespondRTM :: SlackHandle -> RespondTo
+-- | Decide whether to respond to a channel message or DM.
+decideToRespondRTM :: Config -> SlackHandle
                    -> ChannelId -> UserId -> Maybe Subtype
                    -> [Slack.Format] -> IO (Maybe Text)
-decideToRespondRTM h rto cid uid t msg = runMaybeT $
-  decideToRespond (Slack.getConfig h) self cids rto cid uid t msg
+decideToRespondRTM = decideToRespond False
+
+-- | Decide whether to respond to a slash command or interaction button press.
+decideToRespondEvents :: Config -> SlackHandle -> ChannelId -> UserId -> IO Bool
+decideToRespondEvents cfg h cid uid = isJust <$> decideToRespond True cfg h cid uid Nothing []
+
+-- | Decide whether to respond to a chat message or DM.
+-- Returns the message with @mention text removed if the bot should
+-- respond.
+decideToRespond :: Bool -> Config -> SlackHandle
+                -> ChannelId -> UserId -> Maybe Subtype
+                -> [Slack.Format] -> IO (Maybe Text)
+decideToRespond isEvent cfg h cid uid t msg = runMaybeT $
+  decideToRespondBase isEvent (Slack.getConfig h) rto self cids cid uid t msg
   where
     self = _selfUserId . _slackSelf . getSession $ h
     cids = canRespondToChannelIds h rto
-
-{-
-FIXME: slack api is a pain in the arse
-decideToRespondEvents :: SlackConfig -> RespondTo
-                      -> ChannelId -> UserId -> Maybe Subtype
-                      -> [Slack.Format] -> IO (Maybe Text)
-decideToRespondEvents cfg rto cid uid t msg = runMaybeT $ do
-  self <- botInfo cfg
-  cids <- listChannels cfg uid
-  decideToRespond (Slack.getConfig h) self cids rto cid uid t msg
-  where
-    self = undefined -- who am i?
-    cids = canRespondToChannelIds h rto
--}
+    rto  = cfgSlackRespond $ cfgSlack cfg
 
 -- | This method controls how freely wikibot shares search
 -- results. Usually a bot will join any channel it is invited to, and
@@ -128,18 +141,21 @@ decideToRespondEvents cfg rto cid uid t msg = runMaybeT $ do
 -- We need to close this down, so that wikibot will only reply in
 -- whitelisted channels or to whitelisted users. If wikibot is sent a
 -- DM, only reply if the sender is a member of a whitelisted channel.
-decideToRespond :: SlackConfig -> UserId -> [ChannelId]
-                -> RespondTo -> ChannelId -> UserId -> Maybe Subtype
-                -> [Slack.Format] -> MaybeT IO Text
-decideToRespond cfg self cids rto cid uid t msg = do
+--
+-- If bot should respond, returns message without @mention.
+decideToRespondBase :: Bool -> SlackConfig -> RespondTo
+                    -> UserId -> [ChannelId]
+                    -> ChannelId -> UserId -> Maybe Subtype
+                    -> [Slack.Format] -> MaybeT IO Text
+decideToRespondBase isEvent cfg rto self cids cid uid t msg = do
   -- don't respond to self and only normal chat messages
   guard (uid /= self && goodSubtype t)
-  -- respond to DMs or @menthions in whitelisted channels
-  guard (isDM cid || (Slack.isMentioned self msg && cid `elem` cids))
+  -- respond to DMs or @mentions in whitelisted channels
+  guard (isEvent || isDM cid || (Slack.isMentioned self msg && cid `elem` cids))
   -- check if username is whitelisted
   user <- exceptToMaybeT . fmap _userName $ getUser cfg uid
   unless (canRespondToUsername rto user) $ do
-    -- check if user is in a whitelisted channel
+    -- failing that, check if user is in a whitelisted channel
     people <- allChannelMembers cfg cids
     guard (uid `elem` people)
   pure $ Slack.unformatOnlyText msg
@@ -152,11 +168,11 @@ decideToRespond cfg self cids rto cid uid t msg = do
 
 -- | Finds the members of all the channels that wikibot may respond in.
 allChannelMembers :: SlackConfig -> [ChannelId] -> MaybeT IO [UserId]
-allChannelMembers cfg cids = exceptToMaybeT . fmap concat
-  . mapM getChannelMembers $ cids
+allChannelMembers cfg cids = exceptToMaybeT . concatMapM getChannelMembers $ cids
   where
     getChannelMembers = fmap members . getChannel cfg
     members = fromMaybe [] . _channelMembers
+    concatMapM f = fmap concat . mapM f
 
 -- | The channel ids of whitelisted channels that the bot is a member of.
 canRespondToChannelIds :: SlackHandle -> RespondTo -> [ChannelId]
@@ -186,7 +202,8 @@ mentionUser (Just (Id u)) (EventResponse txt as) = EventResponse (sformat ("<@"%
 mentionUser Nothing r = r
 
 handleSearchMessage :: Config -> Maybe UserId -> DocSearch -> Text -> Int -> IO EventResponse
-handleSearchMessage cfg uid docSearch q page =
+handleSearchMessage cfg uid docSearch q page = do
+  say $ sformat ("Search from " % stext % " for: " % stext) (maybe "-" _getId uid) q
   handle errMsg (mentionUser uid . uncurry formatResults <$> res)
   where
     res = doSearch docSearch (Paging 0 count) q
@@ -241,7 +258,9 @@ handleSearchMessage cfg uid docSearch q page =
         newUrl' = newUrl { uriQuery = queryString [("wiki[body]", q)] }
 
     errMsg :: SearchError -> IO EventResponse
-    errMsg = const . pure $ EventResponse "Wikibot can't think at the moment" []
+    errMsg e = do
+      say $ sformat ("Error searching: " % shown) e
+      pure $ EventResponse "Wikibot can't think at the moment" []
 
 relURI :: Text -> URI
 relURI = fromJust . parseRelativeReference . T.unpack
