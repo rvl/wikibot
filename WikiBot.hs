@@ -28,13 +28,25 @@ import qualified Network.Wai.Handler.Warp as Warp
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Time.LocalTime (zonedTimeToUTC)
 import Control.Monad.Catch (handle)
+import Options.Applicative
 
 import Config hiding (SlackConfig)
 import Search (doSearch, WikiSearchResult(..), Document(..), DocSearch, makeDocSearch, Paging(..), SearchError(..))
 
 main :: IO ()
-main = do
-  Right config@Config{..} <- getConfig "config.yml"
+main = wikiBotWithConfig =<< execParser opts
+  where
+    opts = info (cfg <**> helper)
+      ( fullDesc
+        <> progDesc "Runs the Slack bot."
+        <> header "wikibot - Your GitHub Wiki is now a Slack bot" )
+    cfg = strOption
+          ( long "config" <> short 'c' <> metavar "FILE"
+            <> help "YAML file with config"  )
+
+wikiBotWithConfig :: FilePath -> IO ()
+wikiBotWithConfig f = do
+  Right config@Config{..} <- getConfig f
   wikiBot config (makeDocSearch config)
 
 -- | Connect to Slack RTM then run both the RTM handlers and events
