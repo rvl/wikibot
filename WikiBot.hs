@@ -45,8 +45,8 @@ main = wikiBotWithConfig =<< execParser opts
             <> help "YAML file with config"  )
 
 wikiBotWithConfig :: FilePath -> IO ()
-wikiBotWithConfig f = do
-  Right config@Config{..} <- getConfig f
+wikiBotWithConfig configFile = do
+  config <- getConfigOrDie configFile
   wikiBot config (makeDocSearch config)
 
 -- | Connect to Slack RTM then run both the RTM handlers and events

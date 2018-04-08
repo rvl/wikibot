@@ -16,7 +16,7 @@ import Search
 
 main :: IO ()
 main = do
-  Right config@Config{..} <- getConfig "config.yml"
+  config@Config{..} <- getConfigFromEnv
   let search = makeDocSearch config
 
   shakeArgs shakeOptions{shakeFiles=cfgBuildDir} $ do
@@ -25,7 +25,7 @@ main = do
     let docHtmls = [cfgBuildDir </> md -<.> "html" | md <- sources]
         indexedHtmls = [cfgBuildDir </> md -<.> "indexed" | md <- sources]
         sourceFor :: FilePath -> FilePath
-        sourceFor = getSourceFor cfgDocsDir sources
+        sourceFor = getSourceFor cfgBuildDir cfgDocsDir sources
 
     want $ docHtmls ++ indexedHtmls
 
@@ -53,7 +53,7 @@ main = do
           html = out -<.> "html"
           txt = out -<.> "txt"
           meta = out -<.> "json"
-      need ["_build/elastic-index"]
+      need [cfgBuildDir </> "elastic-index"]
       doc <- loadDocument config md txt html meta
       putNormal $ "Indexing " ++ (T.unpack (docId doc)) ++ " " ++ takeFileName md
       void . liftIO $ indexSearchDoc search doc
@@ -61,8 +61,8 @@ main = do
 
     cfgBuildDir </> "elastic-index" %> \out -> do
       putNormal "Setting up elasticsearch index"
-      resp <- liftIO $ createDocIndex search
-      writeFile' out (show resp)
+      liftIO $ createDocIndex search
+      writeFile' out (show (docSearchIdx search))
 
     let
       cleanIndex :: Action ()
@@ -106,9 +106,10 @@ notHiddenFile :: FilePath -> Bool
 notHiddenFile = not . any isHidden . splitPath
   where isHidden = (\p -> p == "." || p == "_") . take 1
 
-getSourceFor :: FilePath -> [FilePath] -> FilePath -> FilePath
-getSourceFor dir sources out = dir </> (lookup' . dropDirectory1 . dropExtension $ out)
+getSourceFor :: FilePath -> FilePath -> [FilePath] -> FilePath -> FilePath
+getSourceFor buildDir dir sources out = dir </> (lookup' . baseFile $ out)
   where
+    baseFile = makeRelative buildDir . dropExtension
     sources' = [(dropExtension f, f) | f <- sources]
     lookup' f = fromMaybe (f <.> "md") $ lookup f sources'
 

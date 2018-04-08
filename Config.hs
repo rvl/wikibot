@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric, OverloadedStrings, LambdaCase #-}
 
 module Config
   ( Config(..)
@@ -8,6 +8,8 @@ module Config
   , RespondTo(..)
   , RespondWhere(..)
   , getConfig
+  , getConfigOrDie
+  , getConfigFromEnv
   , customOptions
   ) where
 
@@ -20,9 +22,26 @@ import Data.Yaml
 import Control.Error
 import Network.URI (URI, parseAbsoluteURI)
 import Data.Foldable (toList)
+import System.Exit (exitFailure)
+import System.Environment (lookupEnv)
+import Say
+import Formatting (sformat, string, (%))
+import Data.Maybe (fromMaybe)
 
 getConfig :: FilePath -> IO (Either String Config)
 getConfig = fmap (fmapL show) . decodeFileEither
+
+getConfigOrDie :: FilePath -> IO Config
+getConfigOrDie f = getConfig f >>= either die pure
+  where
+    die e = do
+      sayErr $ sformat (string%": Problem reading config file: "%string) f e
+      exitFailure
+
+getConfigFromEnv :: IO Config
+getConfigFromEnv = do
+  configFile <- fromMaybe "config.yml" <$> lookupEnv "WIKIBOT_CONFIG"
+  getConfigOrDie configFile
 
 data Config        = Config        { cfgDocsDir  :: FilePath
                                    , cfgBuildDir :: FilePath
@@ -66,6 +85,7 @@ instance FromJSON RespondWhere where
   parseJSON = withText "Entity" $ \t -> case T.splitAt 1 t of
     ("@", u) -> pure $ RespondToUser u
     ("#", c) -> pure $ RespondInChannel c
+    _ -> fail "Expected: #channel or @user"
 
 instance FromJSON RespondTo where
   parseJSON (String "*") = pure RespondToAll
