@@ -37,7 +37,7 @@ provided nix files to build with the forked packages.
 * [x] access control for /wikisearch slash command
 * [x] paging of search results
 * [x] button for less results
-* [ ] update search index when wiki is changed.
+* [x] update search index when wiki is changed.
 * [x] error handling in bot loop
 * [x] error handling when searching
 * [x] add better elasticsearch index parameters and mappings.
@@ -48,7 +48,7 @@ provided nix files to build with the forked packages.
 * [x] Make pull request with additions to [Bloodhound][] package
 * [ ] Make pull request with additions to [slack-api][] package
 * [ ] support multiple collections of documents.
-* [ ] NixOS module
+* [x] NixOS module
 
 [Pandoc]: https://pandoc.org/
 [Shake]: http://shakebuild.com/

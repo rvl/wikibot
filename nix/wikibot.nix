@@ -3,11 +3,12 @@
 , http-client, http-types, network-uri, optparse-applicative
 , pandoc, pandoc-types, safe, say, scotty, shake, slack-api, split
 , stdenv, text, time, transformers, wai, wai-extra, warp, yaml
+, src
 }:
 mkDerivation {
   pname = "wikibot";
   version = "0.1.0.0";
-  src = ./.;
+  inherit src;
   isLibrary = false;
   isExecutable = true;
   executableHaskellDepends = [

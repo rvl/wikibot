@@ -26,7 +26,9 @@ let
 
   variant = if doBenchmark then pkgs.haskell.lib.doBenchmark else pkgs.lib.id;
 
-  drv = variant (haskellPackages.callPackage ./wikibot.nix {});
+  drv = variant (haskellPackages.callPackage ./nix/wikibot.nix {
+    src = pkgs.lib.sourceFilesBySuffices ./. [".hs" ".cabal" "LICENSE"];
+  });
 
 in
 
