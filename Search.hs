@@ -106,19 +106,19 @@ makeDocSearch cfg@Config{..} = DocSearch
   where
     testServer = Server (cfgElasticServer cfgElastic)
 
-createDocIndex :: DocSearch -> IO (Response LS8.ByteString)
-createDocIndex DocSearch{..} = docSearchRun $ do
-  exists <- indexExists docSearchIdx
-  when exists . void $ deleteIndex docSearchIdx
-
-  let
+createDocIndex :: DocSearch -> IO LS8.ByteString
+createDocIndex DocSearch{..} = docSearchRun createIndex >>= handleIndexResponse
+  where
+    createIndex = do
+      exists <- indexExists docSearchIdx
+      when exists . void $ deleteIndex docSearchIdx
+      res <- createIndexWith settings numShards docSearchIdx
+      void $ putMapping docSearchIdx docSearchMapping DocumentMapping
+      pure res
     replicaCount = 0
     numShards = 1
     settings = [ NumberOfReplicas (ReplicaCount replicaCount)
                , AnalysisSetting wikiAnalysis ]
-  res <- createIndexWith settings numShards docSearchIdx
-  void $ putMapping docSearchIdx docSearchMapping DocumentMapping
-  return res
 
 wikiAnalysis :: Analysis
 wikiAnalysis = Analysis
@@ -161,13 +161,14 @@ instance Show IndexingError where
   show (IndexingError r) = "IndexingError: " ++ show r
 instance Exception IndexingError
 
-data SearchError = SearchErrorBadResponse String -- ^ ElasticSearch JSON response was the wrong type
-                 | SearchErrorHttp HttpException -- ^ Error connecting to ElasticSearch by HTTP
-                 | SearchErrorFailure HttpExceptionContent -- ^ Call to ElasticSearch failed
+data SearchError = SearchErrorBadResponse String -- ^ Elasticsearch JSON response was the wrong type
+                 | SearchErrorHttp HttpException -- ^ Error connecting to Elasticsearch by HTTP
+                 | SearchErrorFailure HttpExceptionContent -- ^ Call to Elasticsearch failed
   deriving (Typeable)
 instance Show SearchError where
-  show (SearchErrorBadResponse r) = "Could not decode ElasticSearch response: " ++ show r
-  show (SearchErrorHttp exc) = "Could not connect to ElasticSearch: " ++ show exc
+  show (SearchErrorBadResponse r) = "Could not decode Elasticsearch response: " ++ show r
+  show (SearchErrorHttp exc) = "Could not connect to Elasticsearch: " ++ show exc
+  show (SearchErrorFailure exc) = "Call to Elasticsearch failed: " ++ show exc
 instance Exception SearchError
 
 data WikiSearchResult = WikiSearchResult
